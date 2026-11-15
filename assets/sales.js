@@ -267,16 +267,23 @@
     var mx = 0;
     var my = 0;
     var scrollP = 0;
-    var started = false;
+    var lastP = -1;
+    var running = false;
+    var onScreen = true;
+
+    // 动画循环只在"画面还在动"的时候跑，静止时立刻停下，
+    // 否则页面会一直占着 CPU 跑空转帧，笔记本上会发烫。
+    function kick() {
+      if (running || !onScreen) return;
+      running = true;
+      requestAnimationFrame(tick);
+    }
 
     function readScroll() {
       var h = hero.offsetHeight || 1;
       // 首屏滚过一半就完成"推进"，避免文字已经淡没了画面还在动
       scrollP = Math.max(0, Math.min(1, (window.pageYOffset || 0) / (h * 0.8)));
-      if (!started) {
-        started = true;
-        requestAnimationFrame(tick);
-      }
+      kick();
     }
 
     function onMove(e) {
@@ -286,20 +293,27 @@
       // 跟随鼠标的柔光位置，让边缘光像是被观看的角度带出来的
       hero.style.setProperty("--mx", ((tx + 1) * 50).toFixed(1) + "%");
       hero.style.setProperty("--my", ((ty + 1) * 50).toFixed(1) + "%");
+      kick();
     }
 
     function tick() {
       mx += (tx - mx) * 0.07;
       my += (ty - my) * 0.07;
-      layers.forEach(function (l) {
-        var dx = (-mx * l.depth * 54).toFixed(1) + "px";
-        var dy = (-my * l.depth * 34 - scrollP * l.depth * 110).toFixed(1) + "px";
-        l.el.style.setProperty("--px", dx);
-        l.el.style.setProperty("--py", dy);
-      });
-      hero.style.setProperty("--sc", (1 + scrollP * 0.24).toFixed(3));
-      hero.style.setProperty("--fade", (1 - scrollP * 0.62).toFixed(3));
-      requestAnimationFrame(tick);
+      var moving = Math.abs(tx - mx) > 0.001 || Math.abs(ty - my) > 0.001;
+      if (moving || scrollP !== lastP) {
+        layers.forEach(function (l) {
+          var dx = (-mx * l.depth * 54).toFixed(1) + "px";
+          var dy = (-my * l.depth * 34 - scrollP * l.depth * 110).toFixed(1) + "px";
+          l.el.style.setProperty("--px", dx);
+          l.el.style.setProperty("--py", dy);
+        });
+        hero.style.setProperty("--sc", (1 + scrollP * 0.24).toFixed(3));
+        hero.style.setProperty("--fade", (1 - scrollP * 0.62).toFixed(3));
+        lastP = scrollP;
+      }
+      running = false;
+      // 还有没收敛完的差值就继续跑，彻底静止后停掉
+      if (moving) kick();
     }
 
     if (!reduced) {
@@ -307,8 +321,18 @@
       hero.addEventListener("pointerleave", function () {
         tx = 0;
         ty = 0;
+        kick();
       });
       window.addEventListener("scroll", readScroll, { passive: true });
+      if ("IntersectionObserver" in window) {
+        new IntersectionObserver(
+          function (entries) {
+            onScreen = entries[0].isIntersecting;
+            if (onScreen) readScroll();
+          },
+          { threshold: 0 }
+        ).observe(hero);
+      }
       readScroll();
     }
   }
